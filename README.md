@@ -1,0 +1,188 @@
+# Modal vLLM Inference
+
+Minimal repo for serving an open-source model with vLLM on Modal through an OpenAI-compatible API.
+
+This example serves `google/gemma-4-26B-A4B-it` on an H200 GPU using Modal Volumes for Hugging Face and vLLM caches.
+
+## Setup
+
+Create and activate a virtual environment:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
+Install local dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Create your local environment file:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` and set your deployed Modal endpoint:
+
+```bash
+DEFAULT_ENDPOINT=https://your-workspace-name--example-vllm-inference-serve.modal.run
+```
+
+Authenticate Modal:
+
+```bash
+modal setup
+```
+
+If the Hugging Face model requires access approval, make sure your Modal environment has the needed Hugging Face token configured.
+
+## Test
+
+Run the local entrypoint. Modal will start the remote vLLM server, run a health check, and send a sample chat request:
+
+```bash
+modal run vllm_inference.py
+```
+
+You can pass a custom prompt:
+
+```bash
+modal run vllm_inference.py --content "Explain attention in transformers."
+```
+
+## Deploy
+
+Deploy the OpenAI-compatible API:
+
+```bash
+modal deploy vllm_inference.py
+```
+
+After deployment, Modal prints a URL similar to:
+
+```text
+https://your-workspace-name--example-vllm-inference-serve.modal.run
+```
+
+Useful routes:
+
+- `/health` checks server health.
+- `/docs` opens the Swagger UI.
+- `/v1/chat/completions` accepts OpenAI-compatible chat completion requests.
+
+## Test the Deployed Endpoint
+
+Load the endpoint from `.env` into your current shell:
+
+```bash
+set -a
+source .env
+set +a
+```
+
+First, verify the deployed server is healthy:
+
+```bash
+curl "$DEFAULT_ENDPOINT/health"
+```
+
+Then send a streaming chat completion request:
+
+```bash
+curl -N "$DEFAULT_ENDPOINT/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "stream": true,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Write a tiny Python function that adds two numbers."
+      }
+    ]
+  }'
+```
+
+You can also use the included Python client:
+
+```bash
+python3 test_generation.py
+```
+
+The Python client reads `DEFAULT_ENDPOINT` from `.env`. You can still override it from the command line:
+
+```bash
+python3 test_generation.py --endpoint "https://your-workspace-name--example-vllm-inference-serve.modal.run"
+```
+
+With a custom prompt:
+
+```bash
+python3 test_generation.py --prompt "Write a Python function that checks if a number is prime."
+```
+
+## Cost and Shutdown
+
+This app uses an H200 GPU, so idle time can get expensive. There are two separate things to manage:
+
+- The deployed Modal App.
+- The running GPU containers behind the `serve` Function.
+
+According to Modal's docs, a deployed App persists until you stop it from the web UI or with `modal app stop`. However, Modal Functions scale independently, and by default they scale to zero when there are no live inputs, so a deployed App does not necessarily mean a GPU is always running.
+
+The idle scale-down behavior is configured in `vllm_inference.py` on the `@app.function` decorator:
+
+```python
+@app.function(
+    ...
+    scaledown_window=2 * MINUTES,
+    ...
+)
+```
+
+This means Modal can keep an idle GPU container warm for up to 2 minutes after traffic stops. Lower values reduce idle GPU cost but make cold starts more common. Higher values reduce cold starts but keep the H200 reserved longer while idle. Modal documents the allowed `scaledown_window` range as 2 seconds to 20 minutes.
+
+To see deployed or recently stopped apps:
+
+```bash
+modal app list
+```
+
+To stop this deployed app and terminate its running containers:
+
+```bash
+modal app stop example-vllm-inference
+```
+
+To skip the confirmation prompt:
+
+```bash
+modal app stop example-vllm-inference --yes
+```
+
+Stopping an app is destructive in Modal's terminology: you cannot restart that exact stopped deployment. To bring it back, deploy it again from this repo:
+
+```bash
+modal deploy vllm_inference.py
+```
+
+You can also stop the app from the Modal dashboard by opening the app overview page and using the red "Stop app" button.
+
+## Notes
+
+- vLLM and Transformers are installed in the Modal container image, not in the local Python environment.
+- Local dependencies are only for running Modal and the test client.
+- Set `FAST_BOOT = True` in `vllm_inference.py` if you prefer faster cold starts while iterating.
+- Avoid setting `min_containers` for this Function unless you intentionally want at least one GPU container kept warm at all times.
+
+## References
+
+- [Modal vLLM inference example](https://modal.com/docs/examples/vllm_inference)
+- [How to deploy vLLM on Modal](https://modal.com/blog/how-to-deploy-vllm)
+- [Modal Apps, Functions, and entrypoints](https://modal.com/docs/guide/apps)
+- [Modal scaling and autoscaling](https://modal.com/docs/guide/scale)
+- [Modal cold start performance](https://modal.com/docs/guide/cold-start)
+- [Modal app CLI reference](https://modal.com/docs/reference/cli/app)
