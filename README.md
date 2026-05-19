@@ -25,10 +25,21 @@ Create your local environment file:
 cp .env.example .env
 ```
 
-Then edit `.env` and set your deployed Modal endpoint:
+Then edit `.env` and set your deployed Modal endpoint. The test client uses the
+OpenAI Python library, which requires an API key value. For the unauthenticated
+Modal endpoint in this repo, `EMPTY` is fine:
 
 ```bash
 DEFAULT_ENDPOINT=https://your-workspace-name--example-vllm-inference-serve.modal.run
+OPENAI_API_KEY=EMPTY
+```
+
+If you want to call OpenAI's hosted API with the same test client instead, use
+OpenAI's official base URL and your real OpenAI API key:
+
+```bash
+DEFAULT_ENDPOINT=https://api.openai.com
+OPENAI_API_KEY=sk-...
 ```
 
 Authenticate Modal:
@@ -106,22 +117,38 @@ curl -N "$DEFAULT_ENDPOINT/v1/chat/completions" \
   }'
 ```
 
-You can also use the included Python client:
+You can also use the included Python client. It calls the API through the
+official `openai` client library, so the deployed vLLM server is treated like
+any other OpenAI-compatible chat completions endpoint:
 
 ```bash
 python3 test_generation.py
 ```
 
-The Python client reads `DEFAULT_ENDPOINT` from `.env`. You can still override it from the command line:
+The Python client reads `DEFAULT_ENDPOINT` and `OPENAI_API_KEY` from `.env`.
+You can still override the endpoint from the command line:
 
 ```bash
 python3 test_generation.py --endpoint "https://your-workspace-name--example-vllm-inference-serve.modal.run"
 ```
 
+The Modal vLLM endpoint exposes the model as `llm`, which is the default model
+used by `test_generation.py`.
+
 With a custom prompt:
 
 ```bash
 python3 test_generation.py --prompt "Write a Python function that checks if a number is prime."
+```
+
+To call OpenAI's hosted API instead of the Modal vLLM endpoint, pass the
+official OpenAI base URL and an OpenAI model name:
+
+```bash
+python3 test_generation.py \
+  --endpoint "https://api.openai.com" \
+  --model "gpt-4.1-mini" \
+  --prompt "Write a tiny Python function that adds two numbers."
 ```
 
 ## Cost and Shutdown

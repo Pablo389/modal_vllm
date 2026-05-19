@@ -1,3 +1,4 @@
 modal
 aiohttp
 python-dotenv
+openai

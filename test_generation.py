@@ -1,20 +1,25 @@
 import argparse
-import asyncio
-import json
 import os
-from typing import Any
 
-import aiohttp
+from openai import OpenAI
 from dotenv import load_dotenv
 
 
 load_dotenv()
 
 DEFAULT_ENDPOINT = os.getenv("DEFAULT_ENDPOINT")
+DEFAULT_API_KEY = os.getenv("OPENAI_API_KEY", "EMPTY")
 DEFAULT_PROMPT = "Write a tiny Python function that adds two numbers."
 
 
-async def main() -> None:
+def openai_base_url(endpoint: str) -> str:
+    endpoint = endpoint.rstrip("/")
+    if endpoint.endswith("/v1"):
+        return endpoint
+    return f"{endpoint}/v1"
+
+
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Test the deployed Modal vLLM OpenAI-compatible endpoint."
     )
@@ -22,6 +27,11 @@ async def main() -> None:
         "--endpoint",
         default=DEFAULT_ENDPOINT,
         help="Base URL for the deployed Modal endpoint.",
+    )
+    parser.add_argument(
+        "--api-key",
+        default=DEFAULT_API_KEY,
+        help="API key for the OpenAI-compatible endpoint. Defaults to OPENAI_API_KEY or EMPTY.",
     )
     parser.add_argument(
         "--prompt",
@@ -33,6 +43,12 @@ async def main() -> None:
         default="llm",
         help="Served model name. The Modal server exposes this as 'llm'.",
     )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=300.0,
+        help="Request timeout in seconds.",
+    )
     args = parser.parse_args()
 
     if not args.endpoint:
@@ -40,37 +56,26 @@ async def main() -> None:
             "Missing endpoint. Set DEFAULT_ENDPOINT in .env or pass --endpoint."
         )
 
-    endpoint = args.endpoint.rstrip("/")
-    payload: dict[str, Any] = {
-        "model": args.model,
-        "messages": [{"role": "user", "content": args.prompt}],
-        "stream": True,
-    }
+    client = OpenAI(
+        api_key=args.api_key,
+        base_url=openai_base_url(args.endpoint),
+        timeout=args.timeout,
+    )
 
-    timeout = aiohttp.ClientTimeout(total=300)
-    async with aiohttp.ClientSession(base_url=endpoint, timeout=timeout) as session:
-        async with session.get("/health") as response:
-            response.raise_for_status()
-            print(f"Health check: {response.status} OK")
+    print("\nModel response:\n")
+    stream = client.chat.completions.create(
+        model=args.model,
+        messages=[{"role": "user", "content": args.prompt}],
+        stream=True,
+    )
 
-        print("\nModel response:\n")
-        async with session.post("/v1/chat/completions", json=payload) as response:
-            response.raise_for_status()
-            async for raw_line in response.content:
-                line = raw_line.decode("utf-8").strip()
-                if not line or line == "data: [DONE]":
-                    continue
-                if line.startswith("data: "):
-                    line = line.removeprefix("data: ")
-
-                chunk = json.loads(line)
-                delta = chunk["choices"][0]["delta"]
-                content = delta.get("content")
-                if content:
-                    print(content, end="", flush=True)
+    for chunk in stream:
+        content = chunk.choices[0].delta.content
+        if content:
+            print(content, end="", flush=True)
 
     print()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
