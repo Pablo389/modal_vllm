@@ -2,7 +2,7 @@
 # pytest: false
 # ---
 
-# # Run OpenAI-compatible LLM inference with Gemma and vLLM
+# # Run OpenAI-compatible LLM inference with Qwen and vLLM
 
 # In this example, we show how to run a vLLM server in OpenAI-compatible mode on Modal.
 
@@ -38,7 +38,7 @@ vllm_image = (
     .uv_pip_install(
         "vllm==0.19.0",
     )
-    .uv_pip_install(  # as of vllm 0.19.0, must install transformers separately to use Gemma 4
+    .uv_pip_install(
         "transformers==5.5.0",
     )
     .env({"HF_XET_HIGH_PERFORMANCE": "1"})  # faster model transfers
@@ -46,25 +46,16 @@ vllm_image = (
 
 # ## Download the model weights
 
-# We'll be running a pretrained foundation model --
-# [Google's Gemma 4](https://blog.google/innovation-and-ai/technology/developers-tools/gemma-4/).
-# It can also take images, video, and audio as inputs,
-# though we won't use that here.
-
-# We'll use the 26BA4B variant, [`google/gemma-4-26B-A4B-it`](https://huggingface.co/google/gemma-4-26B-A4B-it).
-# This variant is trained with reasoning capabilities, which allow it to
-# enhance the quality of its generated responses.
-# It has `26B`illion parameters, of which `4B`illion are `A`ctive
-# in processing of each token.
+# We'll be running [Qwen3-Coder](https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8),
+# a 30B MoE coding model (3.3B active parameters) with FP8 weights.
 
 # You can swap this model out for another by changing the strings below,
 # though you might also need to adjust some of the server configuration as well.
-# A single H200 GPU has enough VRAM to store this 26,000,000,000 parameter model
-# along with a large KV cache.
+# A single H100 GPU has enough VRAM for this FP8 variant along with a KV cache.
 
 
-MODEL_NAME = "google/gemma-4-26B-A4B-it"
-MODEL_REVISION = "47b6801b24d15ff9bcd8c96dfaea0be9ed3a0301"  # avoid nasty surprises when repos update!
+MODEL_NAME = "Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8"
+SERVED_MODEL_NAME = "llm"  # alias exposed to OpenAI-compatible clients
 
 # Although vLLM will download weights from Hugging Face on-demand,
 # we want to cache them so we don't do it every time our server starts.
@@ -122,7 +113,7 @@ VLLM_PORT = 8000
 
 @app.function(
     image=vllm_image,
-    gpu=f"H200:{N_GPU}",
+    gpu=f"H100:{N_GPU}",
     scaledown_window=2 * MINUTES,  # how long should we stay up with no requests?
     timeout=10 * MINUTES,  # how long should we wait for container start?
     volumes={
@@ -142,11 +133,8 @@ def serve():
         "vllm",
         "serve",
         MODEL_NAME,
-        "--revision",
-        MODEL_REVISION,
         "--served-model-name",
-        MODEL_NAME,
-        "llm",
+        SERVED_MODEL_NAME,
         "--host",
         "0.0.0.0",
         "--port",
@@ -162,15 +150,11 @@ def serve():
     # assume multiple GPUs are for splitting up large matrix multiplications
     cmd += ["--tensor-parallel-size", str(N_GPU)]
 
-    # add model-specific configuration
+    # Qwen3-Coder tool calling (see vLLM docs: tool-call-parser qwen3_xml)
     cmd += [
-        # skip multimedia support, just language
-        "--limit-mm-per-prompt",
-        f"'{json.dumps({'image': 0, 'video': 0, 'audio': 0})}'",
-        # enable reasoning and tool use
         "--enable-auto-tool-choice",
-        "--reasoning-parser gemma4",
-        "--tool-call-parser gemma4",
+        "--tool-call-parser",
+        "qwen3_xml",
     ]
 
     print(*cmd)
@@ -255,11 +239,11 @@ async def test(test_timeout=10 * MINUTES, content=None, twice=True):
         print(f"Successful health check for server at {url}")
 
         print(f"Sending messages to {url}:", *messages, sep="\n\t")
-        await _send_request(session, "llm", messages)
+        await _send_request(session, SERVED_MODEL_NAME, messages)
         if twice:
             messages[0]["content"] = "You are Jar Jar Binks."
             print(f"Sending messages to {url}:", *messages, sep="\n\t")
-            await _send_request(session, "llm", messages)
+            await _send_request(session, SERVED_MODEL_NAME, messages)
 
 
 async def _send_request(
@@ -267,8 +251,6 @@ async def _send_request(
 ) -> None:
     # `stream=True` tells an OpenAI-compatible backend to stream chunks
     payload: dict[str, Any] = {"messages": messages, "model": model, "stream": True}
-    # explicitly enable thinking for this model
-    payload["chat_template_kwargs"] = {"enable_thinking": True}
 
     headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
 
