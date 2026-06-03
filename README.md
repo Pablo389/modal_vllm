@@ -117,6 +117,82 @@ curl -N "$DEFAULT_ENDPOINT/v1/chat/completions" \
   }'
 ```
 
+### Structured outputs with vLLM + XGrammar
+
+This server can enforce output structure at decode time using vLLM
+`structured_outputs` request fields (`json`, `regex`, `choice`, `grammar`).
+
+JSON schemas in `schemas/`:
+
+- `triton_kernel.json` — general Triton bundle (any op; flexible `constraints.dtype` and `constraints.extra`)
+- `triton_vector_add.json` — stricter template for 1D float32 vector add (`uses_mask`, fixed dtype)
+
+Structured JSON schema with `curl`:
+
+```bash
+curl -N "$DEFAULT_ENDPOINT/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "stream": true,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Return a JSON object with fields kernel_name (string) and block_size (integer)."
+      }
+    ],
+    "structured_outputs": {
+      "json": {
+        "type": "object",
+        "properties": {
+          "kernel_name": {"type": "string"},
+          "block_size": {"type": "integer"}
+        },
+        "required": ["kernel_name", "block_size"],
+        "additionalProperties": false
+      }
+    }
+  }'
+```
+
+You can also test structured outputs with the Python client:
+
+```bash
+python3 test_generation.py \
+  --prompt "Return JSON with fields kernel_name and block_size." \
+  --structured-json '{"type":"object","properties":{"kernel_name":{"type":"string"},"block_size":{"type":"integer"}},"required":["kernel_name","block_size"],"additionalProperties":false}'
+```
+
+Save clean, pretty-printed JSON to a file (validates JSON before writing):
+
+```bash
+python3 test_generation.py \
+  --prompt "Generate a Triton vector-add for two 1D float32 CUDA tensors. Return only JSON matching the schema." \
+  --structured-json schemas/triton_vector_add.json \
+  -o out.json
+```
+
+View generated code from `out.json`:
+
+```bash
+python3 show_out.py out.json
+```
+
+General schema (softmax, matmul, etc. — describe the op in `--prompt`):
+
+```bash
+python3 test_generation.py \
+  --prompt "Generate a Triton row-wise softmax for a 2D float32 CUDA tensor. Return only JSON matching the schema. Put axis and shapes in constraints.extra." \
+  --structured-json schemas/triton_kernel.json \
+  -o out.json
+```
+
+Or redirect stdout (`Model response:` is omitted automatically when stdout is not a TTY):
+
+```bash
+python3 test_generation.py --prompt "..." --structured-json schemas/triton_vector_add.json > out.json
+```
+
 You can also use the included Python client. It calls the API through the
 official `openai` client library, so the deployed vLLM server is treated like
 any other OpenAI-compatible chat completions endpoint:

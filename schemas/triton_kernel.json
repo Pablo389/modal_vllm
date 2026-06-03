@@ -1,0 +1,74 @@
+{
+  "type": "object",
+  "properties": {
+    "task": {
+      "type": "string",
+      "description": "Short id for the operation, e.g. vector_add, softmax, matmul"
+    },
+    "imports": {
+      "type": "string",
+      "description": "Newline-separated Python import lines"
+    },
+    "kernel_name": { "type": "string" },
+    "kernel_code": {
+      "type": "string",
+      "description": "Triton kernel source including @triton.jit"
+    },
+    "launcher_name": { "type": "string" },
+    "launcher_code": {
+      "type": "string",
+      "description": "PyTorch launcher that validates inputs and invokes the kernel"
+    },
+    "constraints": {
+      "type": "object",
+      "properties": {
+        "dtype": {
+          "type": "string",
+          "description": "Primary tensor dtype, e.g. float32, float16, bfloat16"
+        },
+        "device": {
+          "type": "string",
+          "enum": ["cuda"]
+        },
+        "rank": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8,
+          "description": "Tensor rank when applicable"
+        },
+        "uses_mask": { "type": "boolean" },
+        "block_size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8192
+        },
+        "extra": {
+          "type": "object",
+          "description": "Operation-specific metadata, e.g. axis, shapes, reduction",
+          "additionalProperties": true
+        }
+      },
+      "required": ["dtype", "device"],
+      "additionalProperties": false
+    },
+    "quick_test_code": {
+      "type": "string",
+      "description": "Minimal runnable smoke test on CUDA"
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "required": [
+    "task",
+    "imports",
+    "kernel_name",
+    "kernel_code",
+    "launcher_name",
+    "launcher_code",
+    "constraints",
+    "quick_test_code"
+  ],
+  "additionalProperties": false
+}
