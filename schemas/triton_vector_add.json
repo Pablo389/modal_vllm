@@ -1,41 +1,50 @@
 {
-    "type": "object",
-    "properties": {
-      "task": { "type": "string" },
-      "imports": {
-        "type": "string",
-        "description": "Newline-separated Python import lines, e.g. import torch"
-      },
-      "kernel_name": { "type": "string" },
-      "kernel_code": { "type": "string" },
-      "launcher_name": { "type": "string" },
-      "launcher_code": { "type": "string" },
-      "constraints": {
-        "type": "object",
-        "properties": {
-          "dtype": { "type": "string", "enum": ["float32"] },
-          "device": { "type": "string", "enum": ["cuda"] },
-          "uses_mask": { "type": "boolean" },
-          "block_size": { "type": "integer", "minimum": 32, "maximum": 2048 }
-        },
-        "required": ["dtype", "device", "uses_mask", "block_size"],
-        "additionalProperties": false
-      },
-      "quick_test_code": { "type": "string" },
-      "notes": {
-        "type": "array",
-        "items": { "type": "string" }
-      }
+  "type": "object",
+  "properties": {
+    "task": { "type": "string" },
+    "wrapper_name": {
+      "type": "string",
+      "description": "Must be the vector-add wrapper name, typically vector_add"
     },
-    "required": [
-      "task",
-      "imports",
-      "kernel_name",
-      "kernel_code",
-      "launcher_name",
-      "launcher_code",
-      "constraints",
-      "quick_test_code"
-    ],
-    "additionalProperties": false
-  }
+    "imports": {
+      "type": "string",
+      "description": "Newline-separated import lines; must include torch, triton, and triton.language as tl"
+    },
+    "kernel_name": { "type": "string" },
+    "kernel_code": {
+      "type": "string",
+      "description": "Triton kernel with @triton.jit; no imports"
+    },
+    "launcher_code": {
+      "type": "string",
+      "description": "Wrapper function only; must define wrapper_name"
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "dtype": { "type": "string", "enum": ["float32"] },
+        "device": { "type": "string", "enum": ["cuda"] },
+        "uses_mask": { "type": "boolean" },
+        "block_size": { "type": "integer", "minimum": 32, "maximum": 2048 }
+      },
+      "required": ["dtype", "device", "uses_mask", "block_size"],
+      "additionalProperties": false
+    },
+    "quick_test_code": { "type": "string" },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "required": [
+    "task",
+    "wrapper_name",
+    "imports",
+    "kernel_name",
+    "kernel_code",
+    "launcher_code",
+    "metadata",
+    "quick_test_code"
+  ],
+  "additionalProperties": false
+}

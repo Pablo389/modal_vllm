@@ -2,3 +2,4 @@ modal
 aiohttp
 python-dotenv
 openai
+jsonschema>=4.0

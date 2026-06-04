@@ -3,23 +3,29 @@
   "properties": {
     "task": {
       "type": "string",
-      "description": "Short id for the operation, e.g. vector_add, softmax, matmul"
+      "description": "Short id for the operation, e.g. vector_add, div, softmax"
+    },
+    "wrapper_name": {
+      "type": "string",
+      "description": "Exact PyTorch wrapper function name required by TritonBench, e.g. div"
     },
     "imports": {
       "type": "string",
-      "description": "Newline-separated Python import lines"
+      "description": "Newline-separated import lines; must include torch, triton, and triton.language as tl"
     },
-    "kernel_name": { "type": "string" },
+    "kernel_name": {
+      "type": "string",
+      "description": "Name of the @triton.jit kernel function"
+    },
     "kernel_code": {
       "type": "string",
-      "description": "Triton kernel source including @triton.jit"
+      "description": "Triton kernel source with @triton.jit decorator; no import lines"
     },
-    "launcher_name": { "type": "string" },
     "launcher_code": {
       "type": "string",
-      "description": "PyTorch launcher that validates inputs and invokes the kernel"
+      "description": "PyTorch wrapper function source only; must define wrapper_name; no import lines"
     },
-    "constraints": {
+    "metadata": {
       "type": "object",
       "properties": {
         "dtype": {
@@ -44,7 +50,7 @@
         },
         "extra": {
           "type": "object",
-          "description": "Operation-specific metadata, e.g. axis, shapes, reduction",
+          "description": "Operation-specific hints, e.g. axis, shapes, rounding modes",
           "additionalProperties": true
         }
       },
@@ -53,7 +59,7 @@
     },
     "quick_test_code": {
       "type": "string",
-      "description": "Minimal runnable smoke test on CUDA"
+      "description": "Minimal runnable smoke test on CUDA (not included in deepbork predictions)"
     },
     "notes": {
       "type": "array",
@@ -62,12 +68,12 @@
   },
   "required": [
     "task",
+    "wrapper_name",
     "imports",
     "kernel_name",
     "kernel_code",
-    "launcher_name",
     "launcher_code",
-    "constraints",
+    "metadata",
     "quick_test_code"
   ],
   "additionalProperties": false

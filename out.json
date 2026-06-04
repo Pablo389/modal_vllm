@@ -1,22 +1,18 @@
 {
-  "task": "tensor_division",
-  "imports": "import torch",
-  "kernel_name": "div_kernel",
-  "kernel_code": "import torch\n@triton.jit\ndef div_kernel(input_ptr, other_ptr, output_ptr, n_elements, rounding_mode):\n    pid = tl.program_id(0)\n    block_start = pid * BLOCK_SIZE\n    offsets = block_start + tl.arange(0, BLOCK_SIZE)\n    mask = offsets < n_elements\n    input = tl.load(input_ptr + offsets, mask=mask)\n    other = tl.load(other_ptr + offsets, mask=mask)\n    result = input / other\n    if rounding_mode == 'trunc':\n        result = tl.where(result >= 0, tl.floor(result), tl.ceil(result))\n    elif rounding_mode == 'floor':\n        result = tl.floor(result)\n    tl.store(output_ptr + offsets, result, mask=mask)",
-  "launcher_name": "div_launcher",
-  "launcher_code": "def div(input, other, *, rounding_mode=None, out=None):\n    if isinstance(other, (int, float, complex)):\n        other = torch.tensor(other, dtype=input.dtype, device=input.device)\n    if input.shape != other.shape:\n        input, other = torch.broadcast_tensors(input, other)\n    \n    if out is None:\n        out = torch.empty_like(input)\n    \n    n_elements = input.numel()\n    BLOCK_SIZE = 1024\n    grid = (n_elements + BLOCK_SIZE - 1) // BLOCK_SIZE\n    \n    div_kernel[grid](input.data_ptr(), other.data_ptr(), out.data_ptr(), n_elements, rounding_mode)\n    return out",
-  "constraints": {
-    "dtype": "supports_integer_float_complex",
+  "task": "div",
+  "wrapper_name": "div",
+  "imports": "import torch\nimport triton\nimport triton.language as tl",
+  "kernel_name": "_div_kernel",
+  "kernel_code": "@triton.jit\ndef _div_kernel(\n    input_ptr,\n    other_ptr,\n    output_ptr,\n    n_elements,\n    rounding_mode: tl.constexpr,\n    BLOCK_SIZE: tl.constexpr,\n):\n    input_ptr = tl.cast(input_ptr, tl.pointer_type(tl.float32))\n    other_ptr = tl.cast(other_ptr, tl.pointer_type(tl.float32))\n    output_ptr = tl.cast(output_ptr, tl.pointer_type(tl.float32))\n    pid = tl.program_id(0)\n    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)\n    mask = offsets < n_elements\n    x = tl.load(input_ptr + offsets, mask=mask)\n    y = tl.load(other_ptr + offsets, mask=mask)\n    out = x / y\n    if rounding_mode == 1:\n        out = tl.where(out >= 0, tl.floor(out), tl.ceil(out))\n    elif rounding_mode == 2:\n        out = tl.floor(out)\n    tl.store(output_ptr + offsets, out, mask=mask)",
+  "launcher_code": "def div(input, other, *, rounding_mode=None, out=None):\n    if not isinstance(other, torch.Tensor):\n        other = torch.tensor(other, dtype=input.dtype, device=input.device)\n    input, other = torch.broadcast_tensors(input, other)\n    if not input.is_floating_point():\n        input = input.float()\n        other = other.float()\n    if out is None:\n        out = torch.empty_like(input)\n    mode_code = 0\n    if rounding_mode == \"trunc\":\n        mode_code = 1\n    elif rounding_mode == \"floor\":\n        mode_code = 2\n    n_elements = input.numel()\n    BLOCK_SIZE = 1024\n    grid = (triton.cdiv(n_elements, BLOCK_SIZE),)\n    _div_kernel[grid](\n        input.contiguous().data_ptr(),\n        other.contiguous().data_ptr(),\n        out.data_ptr(),\n        n_elements,\n        rounding_mode=mode_code,\n        BLOCK_SIZE=BLOCK_SIZE,\n    )\n    return out",
+  "metadata": {
+    "dtype": "float32",
     "device": "cuda",
     "block_size": 1024,
     "extra": {
       "broadcasting": true,
-      "scalar_support": true,
-      "rounding_modes": [
-        "trunc",
-        "floor"
-      ]
+      "rounding_modes": ["trunc", "floor"]
     }
   },
-  "quick_test_code": "import torch\na = torch.tensor([10, 20, 30], dtype=torch.float32)\nb = torch.tensor([2, 4, 5], dtype=torch.float32)\nresult = div(a, b, rounding_mode='trunc')\nprint(result)"
+  "quick_test_code": "a = torch.tensor([10.0, 20.0, 30.0], device=\"cuda\")\nb = torch.tensor([2.0, 4.0, 5.0], device=\"cuda\")\nprint(div(a, b, rounding_mode=\"trunc\"))"
 }

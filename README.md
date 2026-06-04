@@ -1,8 +1,8 @@
 # Modal vLLM Inference
 
-Minimal repo for serving an open-source model with vLLM on Modal through an OpenAI-compatible API.
+Minimal repo for serving **Qwen3-Coder** with vLLM on Modal through an OpenAI-compatible API, plus a **`triton_bundle`** library for structured Triton kernel generation (XGrammar), assembly, and semantic validation — ready for integration with [deepbork](../deepbork).
 
-This example serves `google/gemma-4-26B-A4B-it` on an H200 GPU using Modal Volumes for Hugging Face and vLLM caches.
+This example serves `Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8` on an **H100** GPU using Modal Volumes for Hugging Face and vLLM caches.
 
 ## Setup
 
@@ -34,21 +34,11 @@ DEFAULT_ENDPOINT=https://your-workspace-name--example-vllm-inference-serve.modal
 OPENAI_API_KEY=EMPTY
 ```
 
-If you want to call OpenAI's hosted API with the same test client instead, use
-OpenAI's official base URL and your real OpenAI API key:
-
-```bash
-DEFAULT_ENDPOINT=https://api.openai.com
-OPENAI_API_KEY=sk-...
-```
-
 Authenticate Modal:
 
 ```bash
 modal setup
 ```
-
-If the Hugging Face model requires access approval, make sure your Modal environment has the needed Hugging Face token configured.
 
 ## Test
 
@@ -58,88 +48,146 @@ Run the local entrypoint. Modal will start the remote vLLM server, run a health 
 modal run vllm_inference.py
 ```
 
-You can pass a custom prompt:
-
-```bash
-modal run vllm_inference.py --content "Explain attention in transformers."
-```
-
 ## Deploy
-
-Deploy the OpenAI-compatible API:
 
 ```bash
 modal deploy vllm_inference.py
 ```
 
-After deployment, Modal prints a URL similar to:
-
-```text
-https://your-workspace-name--example-vllm-inference-serve.modal.run
-```
-
 Useful routes:
 
-- `/health` checks server health.
-- `/docs` opens the Swagger UI.
-- `/v1/chat/completions` accepts OpenAI-compatible chat completion requests.
+- `/health` — server health
+- `/docs` — Swagger UI
+- `/v1/chat/completions` — OpenAI-compatible chat
 
-## Test the Deployed Endpoint
+## Structured Triton bundles (`triton_bundle`)
 
-Load the endpoint from `.env` into your current shell:
+The `triton_bundle` package turns vLLM **structured_outputs** (XGrammar) into modules that deepbork can evaluate.
 
-```bash
-set -a
-source .env
-set +a
+```text
+prompt + JSON schema  →  vLLM XGrammar  →  bundle JSON
+                                              ↓
+                                    assemble_module()
+                                              ↓
+                                    validate_bundle()  →  predictions-ready .py
 ```
 
-First, verify the deployed server is healthy:
+### JSON schemas (`schemas/`)
+
+| File | Purpose |
+|------|---------|
+| `triton_kernel.json` | General Triton bundle for any operator |
+| `triton_vector_add.json` | Stricter template for 1D float32 vector add |
+
+Required bundle fields:
+
+- `wrapper_name` — exact TritonBench function name (e.g. `div`)
+- `imports` — must include `torch`, `triton`, `triton.language as tl`
+- `kernel_name`, `kernel_code` — `@triton.jit` kernel (no imports inside)
+- `launcher_code` — wrapper function only
+- `metadata` — dtype, device, block_size, etc. (hints for the model, not vLLM constraints)
+
+### Generate structured output
 
 ```bash
-curl "$DEFAULT_ENDPOINT/health"
+python3 test_generation.py \
+  --prompt "Functional Description: element-wise division with broadcasting..." \
+  --structured-json schemas/triton_kernel.json \
+  --wrapper-name div \
+  --wrapper-signature "div(input, other, *, rounding_mode=None, out=None) -> Tensor" \
+  -o out.json \
+  --validate \
+  --module-output out.py
 ```
 
-Then send a streaming chat completion request:
+### Generate with automatic repair (recommended)
+
+Validates locally after each attempt; on failure re-prompts with errors (grid tuple, `.data_ptr()`, etc.):
 
 ```bash
-curl -N "$DEFAULT_ENDPOINT/v1/chat/completions" \
+python3 test_generation.py \
+  --prompt "Functional Description: element-wise division..." \
+  --structured-json schemas/triton_kernel.json \
+  --wrapper-name div \
+  --wrapper-signature "div(input, other, *, rounding_mode=None, out=None) -> Tensor" \
+  --repair-attempts 3 \
+  -o out.json
+```
+
+Writes `out.json` and `out.py` when validation passes.
+
+Non-streaming is used automatically for structured JSON (more reliable than streaming).
+
+### Validate an existing bundle
+
+```bash
+python3 validate_bundle.py out.json \
+  --wrapper-name div \
+  --wrapper-signature "div(input, other, *, rounding_mode=None, out=None) -> Tensor" \
+  --assemble
+```
+
+### View assembled code
+
+```bash
+python3 show_out.py out.json --assemble
+```
+
+### Semantic checks (`validate_bundle`)
+
+1. JSON Schema validation (`jsonschema`)
+2. Assemble imports + kernel + launcher into one module
+3. AST: `@triton.jit` on kernel, wrapper name and parameter names
+4. Cross-reference: launcher calls `kernel_name`
+5. Errors for int grid, missing `.data_ptr()`, missing `BLOCK_SIZE=` keyword
+6. Rejects `tl.trunc` in kernel source
+7. `compile()` syntax check
+
+### Python API
+
+```python
+from triton_bundle import assemble_module, generate_structured, validate_bundle
+from triton_bundle.prompts import structured_user_prompt
+from triton_bundle.schema import load_schema
+
+schema = load_schema("triton_kernel.json")
+prompt = structured_user_prompt(
+    instruction="...",
+    wrapper_name="div",
+    wrapper_signature="div(input, other, *, rounding_mode=None, out=None) -> Tensor",
+)
+bundle = generate_structured(
+    endpoint="https://...modal.run",
+    api_key="EMPTY",
+    user_prompt=prompt,
+    json_schema=schema,
+)
+result = validate_bundle(
+    bundle,
+    expected_wrapper_name="div",
+    expected_signature="div(input, other, *, rounding_mode=None, out=None) -> Tensor",
+)
+module = result.module  # ready for deepbork predictions.jsonl
+```
+
+## Free-form generation
+
+```bash
+python3 test_generation.py --prompt "Write a Python function that checks if a number is prime."
+```
+
+## Structured outputs with curl
+
+Use **non-streaming** for JSON payloads:
+
+```bash
+curl "$DEFAULT_ENDPOINT/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llm",
-    "stream": true,
+    "stream": false,
     "messages": [
-      {
-        "role": "user",
-        "content": "Write a tiny Python function that adds two numbers."
-      }
-    ]
-  }'
-```
-
-### Structured outputs with vLLM + XGrammar
-
-This server can enforce output structure at decode time using vLLM
-`structured_outputs` request fields (`json`, `regex`, `choice`, `grammar`).
-
-JSON schemas in `schemas/`:
-
-- `triton_kernel.json` — general Triton bundle (any op; flexible `constraints.dtype` and `constraints.extra`)
-- `triton_vector_add.json` — stricter template for 1D float32 vector add (`uses_mask`, fixed dtype)
-
-Structured JSON schema with `curl`:
-
-```bash
-curl -N "$DEFAULT_ENDPOINT/v1/chat/completions" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "llm",
-    "stream": true,
-    "messages": [
-      {
-        "role": "user",
-        "content": "Return a JSON object with fields kernel_name (string) and block_size (integer)."
-      }
+      {"role": "user", "content": "Return JSON with kernel_name and block_size."}
     ],
     "structured_outputs": {
       "json": {
@@ -155,137 +203,26 @@ curl -N "$DEFAULT_ENDPOINT/v1/chat/completions" \
   }'
 ```
 
-You can also test structured outputs with the Python client:
-
-```bash
-python3 test_generation.py \
-  --prompt "Return JSON with fields kernel_name and block_size." \
-  --structured-json '{"type":"object","properties":{"kernel_name":{"type":"string"},"block_size":{"type":"integer"}},"required":["kernel_name","block_size"],"additionalProperties":false}'
-```
-
-Save clean, pretty-printed JSON to a file (validates JSON before writing):
-
-```bash
-python3 test_generation.py \
-  --prompt "Generate a Triton vector-add for two 1D float32 CUDA tensors. Return only JSON matching the schema." \
-  --structured-json schemas/triton_vector_add.json \
-  -o out.json
-```
-
-View generated code from `out.json`:
-
-```bash
-python3 show_out.py out.json
-```
-
-General schema (softmax, matmul, etc. — describe the op in `--prompt`):
-
-```bash
-python3 test_generation.py \
-  --prompt "Generate a Triton row-wise softmax for a 2D float32 CUDA tensor. Return only JSON matching the schema. Put axis and shapes in constraints.extra." \
-  --structured-json schemas/triton_kernel.json \
-  -o out.json
-```
-
-Or redirect stdout (`Model response:` is omitted automatically when stdout is not a TTY):
-
-```bash
-python3 test_generation.py --prompt "..." --structured-json schemas/triton_vector_add.json > out.json
-```
-
-You can also use the included Python client. It calls the API through the
-official `openai` client library, so the deployed vLLM server is treated like
-any other OpenAI-compatible chat completions endpoint:
-
-```bash
-python3 test_generation.py
-```
-
-The Python client reads `DEFAULT_ENDPOINT` and `OPENAI_API_KEY` from `.env`.
-You can still override the endpoint from the command line:
-
-```bash
-python3 test_generation.py --endpoint "https://your-workspace-name--example-vllm-inference-serve.modal.run"
-```
-
-The Modal vLLM endpoint exposes the model as `llm`, which is the default model
-used by `test_generation.py`.
-
-With a custom prompt:
-
-```bash
-python3 test_generation.py --prompt "Write a Python function that checks if a number is prime."
-```
-
-To call OpenAI's hosted API instead of the Modal vLLM endpoint, pass the
-official OpenAI base URL and an OpenAI model name:
-
-```bash
-python3 test_generation.py \
-  --endpoint "https://api.openai.com" \
-  --model "gpt-4.1-mini" \
-  --prompt "Write a tiny Python function that adds two numbers."
-```
-
 ## Cost and Shutdown
 
-This app uses an H200 GPU, so idle time can get expensive. There are two separate things to manage:
-
-- The deployed Modal App.
-- The running GPU containers behind the `serve` Function.
-
-According to Modal's docs, a deployed App persists until you stop it from the web UI or with `modal app stop`. However, Modal Functions scale independently, and by default they scale to zero when there are no live inputs, so a deployed App does not necessarily mean a GPU is always running.
-
-The idle scale-down behavior is configured in `vllm_inference.py` on the `@app.function` decorator:
-
-```python
-@app.function(
-    ...
-    scaledown_window=2 * MINUTES,
-    ...
-)
-```
-
-This means Modal can keep an idle GPU container warm for up to 2 minutes after traffic stops. Lower values reduce idle GPU cost but make cold starts more common. Higher values reduce cold starts but keep the H200 reserved longer while idle. Modal documents the allowed `scaledown_window` range as 2 seconds to 20 minutes.
-
-To see deployed or recently stopped apps:
-
-```bash
-modal app list
-```
-
-To stop this deployed app and terminate its running containers:
+This app uses an **H100** GPU. Idle containers scale down after `scaledown_window=5 * MINUTES` in `vllm_inference.py`.
 
 ```bash
 modal app stop example-vllm-inference
+modal deploy vllm_inference.py   # redeploy after stop
 ```
 
-To skip the confirmation prompt:
+## deepbork integration (next step)
 
-```bash
-modal app stop example-vllm-inference --yes
+deepbork expects `predictions.jsonl` with a full Python module in `predict`. Once validation passes locally:
+
+```python
+record = {"instruction": alpaca_instruction, "predict": result.module}
 ```
 
-Stopping an app is destructive in Modal's terminology: you cannot restart that exact stopped deployment. To bring it back, deploy it again from this repo:
-
-```bash
-modal deploy vllm_inference.py
-```
-
-You can also stop the app from the Modal dashboard by opening the app overview page and using the red "Stop app" button.
-
-## Notes
-
-- vLLM and Transformers are installed in the Modal container image, not in the local Python environment.
-- Local dependencies are only for running Modal and the test client.
-- Set `FAST_BOOT = True` in `vllm_inference.py` if you prefer faster cold starts while iterating.
-- Avoid setting `min_containers` for this Function unless you intentionally want at least one GPU container kept warm at all times.
+Wire this into `deepbork/main.py` by replacing `extract_code()` with `assemble_module()` when using structured generation.
 
 ## References
 
+- [vLLM structured outputs](https://docs.vllm.ai/en/v0.19.1/features/structured_outputs/)
 - [Modal vLLM inference example](https://modal.com/docs/examples/vllm_inference)
-- [How to deploy vLLM on Modal](https://modal.com/blog/how-to-deploy-vllm)
-- [Modal Apps, Functions, and entrypoints](https://modal.com/docs/guide/apps)
-- [Modal scaling and autoscaling](https://modal.com/docs/guide/scale)
-- [Modal cold start performance](https://modal.com/docs/guide/cold-start)
-- [Modal app CLI reference](https://modal.com/docs/reference/cli/app)
