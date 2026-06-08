@@ -1,0 +1,13 @@
+README.md
+pyproject.toml
+modal_vllm/__init__.py
+modal_vllm/client/__init__.py
+modal_vllm/client/generate.py
+modal_vllm/grammar/__init__.py
+modal_vllm/grammar/triton.ebnf
+modal_vllm/grammar/triton_grammar.py
+modal_vllm_client.egg-info/PKG-INFO
+modal_vllm_client.egg-info/SOURCES.txt
+modal_vllm_client.egg-info/dependency_links.txt
+modal_vllm_client.egg-info/requires.txt
+modal_vllm_client.egg-info/top_level.txt

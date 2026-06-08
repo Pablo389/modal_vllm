@@ -17,7 +17,11 @@ Install local dependencies:
 
 ```bash
 pip install -r requirements.txt
+pip install -e .
 ```
+
+The editable install exposes the `modal_vllm` package (`grammar/`, `client/`) used by
+the sibling `deepbork` repo.
 
 Create your local environment file:
 
@@ -124,6 +128,34 @@ any other OpenAI-compatible chat completions endpoint:
 ```bash
 python3 test_generation.py
 ```
+
+### Triton DSL grammar (xgrammar)
+
+Grammar assets and the OpenAI client with constrained decoding live in the
+`modal_vllm` Python package (`modal_vllm/grammar/`, `modal_vllm/client/`).
+
+Validate the EBNF locally (layer A):
+
+```bash
+python3 -c "from modal_vllm.grammar.triton_grammar import validate_ebnf, build_grammar_ebnf; validate_ebnf(build_grammar_ebnf())"
+```
+
+Test generation with xgrammar against a deployed endpoint (layer B; requires
+`DEFAULT_ENDPOINT` in `.env` and Modal function timeout >= 60 minutes):
+
+```bash
+python3 test_grammar_generation.py --grammar triton_fenced --timeout 900
+```
+
+Disable grammar constraints:
+
+```bash
+python3 test_grammar_generation.py --no-grammar
+```
+
+Deepbork consumes this client via editable install (`pip install -e ../modal_vllm`).
+Generation sends `extra_body.structured_outputs.grammar` to vLLM; constrained
+decoding runs on the Modal GPU container, not locally.
 
 The Python client reads `DEFAULT_ENDPOINT` and `OPENAI_API_KEY` from `.env`.
 You can still override the endpoint from the command line:

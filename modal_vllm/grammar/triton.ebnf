@@ -1,0 +1,168 @@
+# Triton GPU Kernel DSL — GBNF aligned with triton_parser.y.
+# A valid module must include required imports, @triton.jit kernel, and wrapper def.
+
+root ::= fenced_module | program
+fenced_module ::= "```python\n" program "\n```"
+
+program ::= import_torch import_triton import_tl newline_list triton_jit_kernel wrapper_func program_tail
+
+newline_list ::= nl newline_list | ""
+
+import_torch ::= "import" ws "torch" nl
+import_triton ::= "import" ws "triton" nl
+import_tl ::= "import" ws "triton" "." "language" ws "as" ws "tl" nl
+
+triton_jit_kernel ::= triton_jit_header nl kernel_func_def nl
+triton_jit_header ::= "@" "triton" "." "jit" jit_decorator_suffix
+jit_decorator_suffix ::= "" | "()"
+
+kernel_func_def ::= "def" ws ident "(" param_list ")" return_annotation ws? ":" kernel_block
+kernel_block ::= nl kernel_body
+kernel_body ::= kernel_stmt kernel_body_tail
+kernel_body_tail ::= nl kernel_stmt kernel_body_tail | ""
+kernel_stmt ::= ws (assign_stmt | expr_stmt | for_stmt | if_stmt | return_stmt) nl?
+
+wrapper_func ::= wrapper_def nl
+wrapper_def ::= "def" ws ident "(" param_list ")" return_annotation ws? ":" wrapper_block
+wrapper_block ::= nl wrapper_body
+wrapper_body ::= wrapper_leading return_stmt nl
+wrapper_leading ::= wrapper_stmt wrapper_leading | ""
+wrapper_stmt ::= ws (assign_stmt | expr_stmt | for_stmt | if_stmt) nl?
+
+program_tail ::= program_tail_item | ""
+program_tail_item ::= stmt nl program_tail
+
+ident ::= [a-zA-Z_] [a-zA-Z0-9_]*
+integer ::= [0-9]+
+float_lit ::= [0-9]+ "." [0-9]+
+string_lit ::= "\"" [^"]* "\"" | "'" [^']* "'"
+
+nl ::= "\n"
+ws ::= [ \t]+
+
+stmt ::= func_def | decorated | compound_stmt | simple_stmt
+
+simple_stmt ::= assign_stmt | return_stmt | import_stmt | expr_stmt
+
+assign_stmt ::= lvalue ws? "=" ws? expr
+              | lvalue ws? "+=" ws? expr
+              | lvalue ws? "-=" ws? expr
+              | lvalue ws? "*=" ws? expr
+
+lvalue ::= ident
+         | ident "[" subscript_list "]"
+
+return_stmt ::= "return" ws? return_val
+return_val ::= expr | ""
+
+expr_stmt ::= expr
+
+import_stmt ::= "import" ws dotted_name import_alias
+              | "from" ws dotted_name ws "import" ws import_what
+
+dotted_name ::= ident dotted_tail
+dotted_tail ::= "." ident dotted_tail | ""
+
+import_what ::= ident import_alias
+              | "(" id_list ")"
+import_alias ::= ws "as" ws ident | ""
+id_list ::= ident id_list_tail
+id_list_tail ::= "," ws? ident id_list_tail | ""
+
+compound_stmt ::= if_stmt | for_stmt
+
+if_stmt ::= "if" ws expr ws? ":" block else_part
+else_part ::= nl ws "else" ws? ":" block | ""
+
+for_stmt ::= "for" ws ident ws "in" ws expr ws? ":" block
+
+block ::= nl indented_body
+indented_body ::= indented_stmt+
+indented_stmt ::= ws stmt nl?
+
+func_def ::= "def" ws ident "(" param_list ")" return_annotation ws? ":" block
+
+return_annotation ::= "->" ws? expr | ""
+
+opt_nl ::= nl opt_nl | ws opt_nl | ""
+
+param_list ::= opt_nl param param_list_tail opt_nl | opt_nl
+param_list_tail ::= "," opt_nl param param_list_tail | ""
+
+param ::= ident param_annotation param_default
+
+param_annotation ::= ":" ws? expr | ""
+param_default ::= "=" ws? expr | ""
+
+decorated ::= "@" dotted_name jit_decorator_suffix nl func_def
+decorator_args ::= jit_decorator_suffix
+
+expr ::= and_expr expr_tail
+expr_tail ::= ws "or" ws and_expr expr_tail | ""
+
+and_expr ::= not_expr and_expr_tail
+and_expr_tail ::= ws "and" ws not_expr and_expr_tail | ""
+
+not_expr ::= "not" ws not_expr | cmp_expr
+
+cmp_expr ::= bor_expr cmp_expr_tail
+cmp_expr_tail ::= ws cmp_op ws bor_expr | ""
+
+cmp_op ::= "==" | "!=" | "<" | ">" | "<=" | ">="
+
+bor_expr ::= xor_expr bor_expr_tail
+bor_expr_tail ::= "|" xor_expr bor_expr_tail | ""
+
+xor_expr ::= band_expr xor_expr_tail
+xor_expr_tail ::= "^" band_expr xor_expr_tail | ""
+
+band_expr ::= shift_expr band_expr_tail
+band_expr_tail ::= "&" shift_expr band_expr_tail | ""
+
+shift_expr ::= add_expr shift_expr_tail
+shift_expr_tail ::= "<<" add_expr shift_expr_tail | ">>" add_expr shift_expr_tail | ""
+
+add_expr ::= mul_expr add_expr_tail
+add_expr_tail ::= "+" mul_expr add_expr_tail | "-" mul_expr add_expr_tail | ""
+
+mul_expr ::= unary_expr mul_expr_tail
+mul_expr_tail ::= "*" unary_expr mul_expr_tail
+              | "/" unary_expr mul_expr_tail
+              | "%" unary_expr mul_expr_tail
+              | "//" unary_expr mul_expr_tail
+              | ""
+
+unary_expr ::= "-" unary_expr | "~" unary_expr | power_expr
+
+power_expr ::= trailer_expr "**" unary_expr | trailer_expr
+
+trailer_expr ::= atom trailer_list
+trailer_list ::= trailer trailer_list | ""
+
+trailer ::= "(" arg_list ")"
+          | "[" subscript_list "]"
+          | "." ident
+
+subscript_list ::= subscript subscript_list_tail
+subscript_list_tail ::= "," ws? subscript subscript_list_tail | ""
+
+subscript ::= expr slice_part
+slice_part ::= ":" ws? expr | ""
+
+arg_list ::= argument arg_list_tail | ""
+arg_list_tail ::= "," ws? argument arg_list_tail | ""
+
+argument ::= ident ws? "=" ws? expr | expr
+
+atom ::= ident
+       | integer
+       | float_lit
+       | string_lit
+       | "True"
+       | "False"
+       | "None"
+       | "(" expr ")"
+       | "[" list_items "]"
+
+list_items ::= expr list_tail | ""
+list_tail ::= "," ws? expr list_tail | ""

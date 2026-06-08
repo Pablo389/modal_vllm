@@ -109,13 +109,14 @@ app = modal.App("example-vllm-inference")
 N_GPU = 1
 MINUTES = 60  # seconds
 VLLM_PORT = 8000
+FUNCTION_TIMEOUT = 60 * MINUTES  # max container lifetime (long chat completions)
 
 
 @app.function(
     image=vllm_image,
     gpu=f"H100:{N_GPU}",
     scaledown_window=5 * MINUTES,  # how long should we stay up with no requests?
-    timeout=10 * MINUTES,  # how long should we wait for container start?
+    timeout=FUNCTION_TIMEOUT,
     volumes={
         "/root/.cache/huggingface": hf_cache_vol,
         "/root/.cache/vllm": vllm_cache_vol,
